@@ -17,7 +17,7 @@ function makeMockTransaction(overrides: Partial<any> = {}) {
   return {
     _id: 'txn-1',
     stage: 'agreement',
-    stageHistory: [],
+    stageHistory: [] as { stage: string; timestamp: Date }[],
     totalServiceFee: 10000,
     listingAgentId: 'agent-a',
     sellingAgentId: 'agent-b',
