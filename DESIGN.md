@@ -106,6 +106,57 @@ The service is called once in `TransactionsService.advanceStage()` at the moment
 
 ---
 
+## Financial Breakdown (§4.2)
+
+The brief requires the system to report, for every completed transaction, **how much the agency earned, how much each agent earned, and why** (listing vs. selling role). It leaves the storage strategy open — embed, dedicated collection, or compute dynamically.
+
+### Storage Options Considered
+
+| Option | Pros | Cons | Verdict |
+|---|---|---|---|
+| **Embed in the transaction document** ✅ | Atomic write with the stage transition; immutable by construction; single read serves detail page; no joins | Denormalised (agency split % frozen at completion time) | **Chosen** |
+| Dedicated `commissions` collection | Easier to evolve commission-specific fields (e.g. payout status) | Extra join on every read; cross-document consistency (two-phase writes) without MongoDB transactions; more moving parts for a value that never changes after completion | Rejected |
+| Compute dynamically on read | Always reflects current policy | Breaks immutability — a future policy change would retroactively alter historical records; reports must recompute on every request | Rejected |
+
+### Why Embed Wins Here
+
+The commission breakdown has three properties that strongly favour embedding:
+
+1. **It is write-once, read-many.** Once a transaction hits `completed`, the breakdown is never edited. A dedicated collection's flexibility is wasted.
+2. **It must be immutable.** If the agency changes its 50/50 split to 60/40 next year, last year's completed transactions must still show 50/50. Embedding freezes the snapshot; dynamic computation cannot.
+3. **It is always read with its parent.** Every view that shows a commission also shows the transaction (address, price, stage). A single-document read is both simpler and faster than a lookup.
+
+### Shape of the Embedded Breakdown
+
+```ts
+commissionBreakdown: {
+  agencyAmount:        number,  // 50% of totalServiceFee
+  listingAgentAmount:  number,  // share of the 50% agent pool, based on role
+  sellingAgentAmount:  number,  // share of the 50% agent pool, based on role
+} | null                        // null until stage === 'completed'
+```
+
+Combined with the transaction's own `listingAgentId` and `sellingAgentId`, this answers all three §4.2 questions in a single read:
+
+| §4.2 question | Answered by |
+|---|---|
+| How much did the agency earn? | `commissionBreakdown.agencyAmount` |
+| How much did each agent earn? | `listingAgentAmount` + `sellingAgentAmount` |
+| **Why** did they earn that amount? | The **field names themselves** encode the role — the listing agent earned `listingAgentAmount`, the selling agent earned `sellingAgentAmount`. Pairing with `listingAgentId` / `sellingAgentId` gives the "who + why" without any extra lookup. |
+
+This shape also gracefully handles the same-agent edge case: `listingAgentAmount` holds the full agent pool and `sellingAgentAmount` is `0`, making the role distinction explicit in data rather than inferred at read time.
+
+### Consumption Points
+
+- **Transaction detail page** (`pages/transactions/[id].vue`) renders the three amounts side by side with the two agent names, directly from the embedded object.
+- **Reports layer** (`GET /reports/agents`) sums `listingAgentAmount` over transactions where the agent is the listing agent, and `sellingAgentAmount` where they are the selling agent, then merges — see the [Reporting Layer](#reporting-layer) section. Because the breakdown is embedded, this aggregation is a single collection scan with no `$lookup`.
+
+### Trade-off Accepted
+
+If the agency ever needs to adjust a historical commission (e.g. a corrective entry), the current design requires a migration rather than a simple policy change. This is the correct trade-off: financial records should be hard to rewrite, and explicit migrations are auditable where silent recomputation is not.
+
+---
+
 ## Stage Transition Rules
 
 ```
