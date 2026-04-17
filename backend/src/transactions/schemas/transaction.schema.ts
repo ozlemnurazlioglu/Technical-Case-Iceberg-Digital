@@ -16,6 +16,7 @@ export class Transaction {
   totalServiceFee: number;
 
   @Prop({
+    type: String,
     required: true,
     enum: ['agreement', 'earnest_money', 'title_deed', 'completed'],
     default: 'agreement',
