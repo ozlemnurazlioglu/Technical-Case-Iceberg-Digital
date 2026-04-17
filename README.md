@@ -6,9 +6,9 @@ A full-stack real-estate commission management system. Tracks transaction lifecy
 
 | Resource | URL |
 |---|---|
-| Frontend (Vercel) | _will be added after deploy_ |
-| Backend API (Railway) | _will be added after deploy_ |
-| API Documentation | `<API_URL>/api/docs` (Swagger UI) |
+| Frontend (Vercel) | https://technical-case-iceberg-digital.vercel.app |
+| Backend API (Railway) | https://technical-case-iceberg-digital-production.up.railway.app |
+| API Documentation | https://technical-case-iceberg-digital-production.up.railway.app/api/docs |
 
 ## Stack
 
