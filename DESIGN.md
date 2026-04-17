@@ -181,13 +181,14 @@ Two endpoints:
 
 | File | Approach | Tests |
 |---|---|---|
-| `commission.service.spec.ts` | Pure unit (no mocks) | Agency 50% rule, same-agent scenario, different-agent scenario, sum invariant |
-| `stage-transitions.spec.ts` | Pure unit (no mocks) | All 4 valid transitions, null on completed |
-| `transactions.service.spec.ts` | Unit with mocks | Stage advance, commission embedding at completion, 400 on completed, 404 on not found |
-| `reports.service.spec.ts` | Unit with mocks | Summary aggregation, stage distribution, agent leaderboard ranking, same-agent edge case |
-| `app.controller.spec.ts` | Unit | Health check |
+| `commission.service.spec.ts` | Pure unit (no mocks) | Agency 50% rule, Scenario 1 (same agent), Scenario 2 (different agents), sum invariant on both paths |
+| `stage-transitions.spec.ts` | Pure unit (no mocks) | All 3 valid transitions, null on completed, enum length guard |
+| `transactions.service.spec.ts` | Unit with mocks | Stage advance + history append, commission embedding at completion, 400 on advancing completed, 404 on missing transaction |
+| `reports.service.spec.ts` | Unit with mocks | Summary aggregation, stage distribution, empty-database edge case, agent leaderboard ranking, same-agent edge case |
+| `agents.service.spec.ts` | Unit with mocks | Successful create, **409 Conflict on duplicate email (E11000)**, rethrow on unrelated errors, 404 on missing agent |
+| `app.controller.spec.ts` | Unit | Root endpoint returns API metadata (name, version, docs path, endpoint links) |
 
-**20 tests, all passing.** The commission service, stage-transition utility, and reports aggregation are pure/near-pure functions — no database, minimal DI. This makes them the fastest and most reliable tests in the suite.
+**24 tests across 6 suites, all passing** (`npx jest --rootDir . --no-coverage`). The commission service, stage-transition utility, and reports aggregation are pure/near-pure functions — no database, minimal DI. This makes them the fastest and most reliable tests in the suite and maps directly to §4.3 (commission policy) and §4.1 (stage lifecycle) of the brief.
 
 ## CI/CD
 
