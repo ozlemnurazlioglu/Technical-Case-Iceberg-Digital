@@ -112,7 +112,9 @@ The service is called once in `TransactionsService.advanceStage()` at the moment
 agreement → earnest_money → title_deed → completed
 ```
 
-**Forward-only, no skipping.** Each stage represents an irreversible real-world legal event:
+### Decision on §4.1 — "Optionally prevent invalid transitions"
+
+The brief leaves this as a design choice. **I decided to prevent invalid transitions**, because each stage represents an irreversible real-world legal event:
 
 | Stage | Real-world event |
 |---|---|
@@ -121,9 +123,31 @@ agreement → earnest_money → title_deed → completed
 | `title_deed` | Title deed transferred |
 | `completed` | Transaction closed |
 
-Attempting to advance a `completed` transaction returns `400 Bad Request`. Attempting to skip a stage (e.g. agreement → title_deed) is impossible because the API only advances one step.
+Once earnest money is deposited you cannot "un-deposit" it; once a title deed is transferred you cannot reverse it from the system's point of view. Allowing free-form transitions would require the system to model refunds, reversals, and audits that are out of scope for this case. Constraining transitions keeps the audit trail trustworthy and the reporting layer simple (a `completed` transaction's commission breakdown never changes).
 
-**Implementation:** `getNextStage()` in `stage-transitions.ts` is a pure lookup function tested in isolation. The service calls it without knowing the ordering logic; if the order ever changes, only `stage-transitions.ts` changes.
+### Policy
+
+- **Forward-only:** no backward or skipping transitions
+- **One step at a time:** advance one stage per request — skipping is impossible by construction
+- **Terminal state:** `completed` is irreversible; attempts to advance return **400 Bad Request**
+
+### Defense in Depth (Three Layers)
+
+| Layer | Mechanism | What it catches |
+|---|---|---|
+| **API / Service** | `TransactionsService.advanceStage()` calls the pure `getNextStage()` helper; returns `400` when the transaction is already `completed` | Programmatic callers attempting to advance past the terminal state |
+| **Database** | Mongoose `enum: ['agreement', 'earnest_money', 'title_deed', 'completed']` at the schema level | Direct writes with unknown/malformed stage values |
+| **Frontend** | "Advance to …" button is hidden when `stage === 'completed'` and replaced with a "Transaction completed" badge (`pages/transactions/[id].vue`) | User cannot even attempt an invalid click |
+
+The frontend check is strictly a UX improvement — the backend remains authoritative and rejects any request that somehow bypasses the UI.
+
+### Implementation
+
+`getNextStage()` in `stage-transitions.ts` is a pure lookup function tested in isolation. The service calls it without knowing the ordering logic; if the order ever changes, only `stage-transitions.ts` changes. The `STAGE_ORDER` constant is the single source of truth reused by the schema, the service, the frontend, and the tests.
+
+### Trade-off Accepted
+
+Hard-preventing transitions means there is no built-in "undo" or admin override. If the business later needs to cancel a transaction mid-flow, the intended extension is a new `cancelled` terminal stage (or a separate cancellation event) rather than allowing arbitrary backward movement — keeping the audit log strictly append-only.
 
 ---
 
