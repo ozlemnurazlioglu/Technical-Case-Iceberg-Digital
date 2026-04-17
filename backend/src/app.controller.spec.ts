@@ -15,8 +15,16 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('returns API info with name, status, and endpoint links', () => {
+      const info = appController.getInfo();
+      expect(info.name).toBe('Estate Commission Tracker API');
+      expect(info.status).toBe('ok');
+      expect(info.docs).toBe('/api/docs');
+      expect(info.endpoints).toEqual({
+        agents: '/agents',
+        transactions: '/transactions',
+        reports: '/reports/summary',
+      });
     });
   });
 });
