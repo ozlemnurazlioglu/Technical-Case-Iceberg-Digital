@@ -39,18 +39,36 @@ export const useTransactionsStore = defineStore('transactions', {
 
     async create(payload: CreateTransactionPayload) {
       const { post } = useApi();
-      const created = await post<Transaction>('/transactions', payload);
-      this.transactions.unshift(created);
-      return created;
+      const toast = useToast();
+      try {
+        const created = await post<Transaction>('/transactions', payload);
+        this.transactions.unshift(created);
+        toast.success('Transaction created');
+        return created;
+      } catch (e: any) {
+        toast.error(e?.data?.message ?? e?.message ?? 'Failed to create transaction');
+        throw e;
+      }
     },
 
     async advanceStage(id: string) {
       const { patch } = useApi();
-      const updated = await patch<Transaction>(`/transactions/${id}/stage`);
-      this.current = updated;
-      const idx = this.transactions.findIndex((t) => t._id === id);
-      if (idx !== -1) this.transactions[idx] = updated;
-      return updated;
+      const toast = useToast();
+      try {
+        const updated = await patch<Transaction>(`/transactions/${id}/stage`);
+        this.current = updated;
+        const idx = this.transactions.findIndex((t) => t._id === id);
+        if (idx !== -1) this.transactions[idx] = updated;
+        if (updated.stage === 'completed') {
+          toast.success('Transaction completed — commission distributed');
+        } else {
+          toast.info(`Advanced to ${updated.stage.replace(/_/g, ' ')}`);
+        }
+        return updated;
+      } catch (e: any) {
+        toast.error(e?.data?.message ?? e?.message ?? 'Failed to advance stage');
+        throw e;
+      }
     },
   },
 

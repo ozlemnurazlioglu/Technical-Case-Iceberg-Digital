@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  background-color: #0b0d14;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  color: #e8e4da;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: rgba(212, 168, 83, 0.22);
+  color: #e8c06a;
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: #11141d; }
+::-webkit-scrollbar-thumb { background: #252a3e; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #30374f; }
+
+/* Page transitions */
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.page-enter-from,
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+/* Card hover lift */
+.card-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+.card-lift:hover {
+  transform: translateY(-2px);
+  background-color: #161926;
+  border-color: rgba(212, 168, 83, 0.22);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(212, 168, 83, 0.08);
+}
+
+/* Dark input */
+.input-dark {
+  display: block;
+  width: 100%;
+  background: #0b0d14;
+  border: 1px solid #1e2232;
+  color: #e8e4da;
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  appearance: none;
+}
+.input-dark::placeholder { color: #535870; }
+.input-dark:focus {
+  border-color: rgba(212, 168, 83, 0.45);
+  box-shadow: 0 0 0 3px rgba(212, 168, 83, 0.07);
+}
+.input-dark option {
+  background: #11141d;
+  color: #e8e4da;
+}
+
+/* Spinner */
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Form slide transition */
+.form-slide-enter-active,
+.form-slide-leave-active {
+  transition: opacity 0.22s ease, max-height 0.3s ease, margin 0.22s ease;
+  overflow: hidden;
+}
+.form-slide-enter-from,
+.form-slide-leave-to {
+  opacity: 0;
+  max-height: 0;
+  margin-bottom: 0;
+}
+.form-slide-enter-to,
+.form-slide-leave-from {
+  opacity: 1;
+  max-height: 700px;
+  margin-bottom: 2rem;
+}

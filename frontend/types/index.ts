@@ -41,3 +41,24 @@ export interface CreateAgentPayload {
   email: string;
   phone?: string;
 }
+
+export interface ReportsSummary {
+  totalTransactions: number;
+  activeTransactions: number;
+  completedTransactions: number;
+  totalAgencyEarnings: number;
+  totalAgentEarnings: number;
+  pipelineValue: number;
+  completedValue: number;
+  stageDistribution: Record<TransactionStage, number>;
+}
+
+export interface AgentEarning {
+  agentId: string;
+  name: string;
+  email: string;
+  completedTransactions: number;
+  totalEarnings: number;
+  asListing: number;
+  asSelling: number;
+}

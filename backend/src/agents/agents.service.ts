@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Agent, AgentDocument } from './schemas/agent.schema';
@@ -6,10 +10,26 @@ import { CreateAgentDto } from './dto/create-agent.dto';
 
 @Injectable()
 export class AgentsService {
-  constructor(@InjectModel(Agent.name) private agentModel: Model<AgentDocument>) {}
+  constructor(
+    @InjectModel(Agent.name) private agentModel: Model<AgentDocument>,
+  ) {}
 
   async create(dto: CreateAgentDto): Promise<AgentDocument> {
-    return new this.agentModel(dto).save();
+    try {
+      return await new this.agentModel(dto).save();
+    } catch (err: unknown) {
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code: number }).code === 11000
+      ) {
+        throw new ConflictException(
+          `Agent with email '${dto.email}' already exists`,
+        );
+      }
+      throw err;
+    }
   }
 
   async findAll(): Promise<AgentDocument[]> {

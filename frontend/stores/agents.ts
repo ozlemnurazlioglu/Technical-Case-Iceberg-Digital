@@ -24,9 +24,21 @@ export const useAgentsStore = defineStore('agents', {
 
     async create(payload: CreateAgentPayload) {
       const { post } = useApi();
-      const created = await post<Agent>('/agents', payload);
-      this.agents.push(created);
-      return created;
+      const toast = useToast();
+      try {
+        const created = await post<Agent>('/agents', payload);
+        this.agents.push(created);
+        toast.success(`Agent "${created.name}" added`);
+        return created;
+      } catch (e: any) {
+        const status = e?.statusCode ?? e?.response?.status;
+        const message =
+          status === 409
+            ? 'An agent with that email already exists'
+            : e?.data?.message ?? e?.message ?? 'Failed to create agent';
+        toast.error(message);
+        throw e;
+      }
     },
   },
 });

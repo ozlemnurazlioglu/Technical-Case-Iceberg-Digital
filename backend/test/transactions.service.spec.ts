@@ -3,6 +3,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { TransactionsService } from '../src/transactions/transactions.service';
 import { CommissionService } from '../src/commission/commission.service';
+import { AgentsService } from '../src/agents/agents.service';
 import { Transaction } from '../src/transactions/schemas/transaction.schema';
 
 const mockCommissionService = {
@@ -11,6 +12,10 @@ const mockCommissionService = {
     listingAgentAmount: 2500,
     sellingAgentAmount: 2500,
   }),
+};
+
+const mockAgentsService = {
+  findOne: jest.fn().mockResolvedValue({ _id: 'agent', name: 'Mock' }),
 };
 
 function makeMockTransaction(overrides: Partial<any> = {}) {
@@ -43,6 +48,7 @@ describe('TransactionsService', () => {
         TransactionsService,
         { provide: getModelToken(Transaction.name), useValue: mockModel },
         { provide: CommissionService, useValue: mockCommissionService },
+        { provide: AgentsService, useValue: mockAgentsService },
       ],
     }).compile();
 
@@ -53,7 +59,9 @@ describe('TransactionsService', () => {
     it('advances from agreement to earnest_money', async () => {
       const txn = makeMockTransaction({ stage: 'agreement' });
       txn.save.mockResolvedValue({ ...txn, stage: 'earnest_money' });
-      mockModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(txn) });
+      mockModel.findById.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(txn),
+      });
 
       await service.advanceStage('txn-1');
 
@@ -65,7 +73,9 @@ describe('TransactionsService', () => {
     it('embeds commission breakdown when advancing to completed', async () => {
       const txn = makeMockTransaction({ stage: 'title_deed' });
       txn.save.mockResolvedValue(txn);
-      mockModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(txn) });
+      mockModel.findById.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(txn),
+      });
 
       await service.advanceStage('txn-1');
 
@@ -83,15 +93,23 @@ describe('TransactionsService', () => {
 
     it('throws BadRequestException when already at completed', async () => {
       const txn = makeMockTransaction({ stage: 'completed' });
-      mockModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(txn) });
+      mockModel.findById.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(txn),
+      });
 
-      await expect(service.advanceStage('txn-1')).rejects.toThrow(BadRequestException);
+      await expect(service.advanceStage('txn-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('throws NotFoundException when transaction not found', async () => {
-      mockModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+      mockModel.findById.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(null),
+      });
 
-      await expect(service.advanceStage('nonexistent')).rejects.toThrow(NotFoundException);
+      await expect(service.advanceStage('nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

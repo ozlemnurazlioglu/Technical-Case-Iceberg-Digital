@@ -51,3 +51,8 @@ export class Transaction {
 }
 
 export const TransactionSchema = SchemaFactory.createForClass(Transaction);
+
+TransactionSchema.index({ stage: 1 });
+TransactionSchema.index({ listingAgentId: 1 });
+TransactionSchema.index({ sellingAgentId: 1 });
+TransactionSchema.index({ createdAt: -1 });

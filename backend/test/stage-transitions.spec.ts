@@ -1,4 +1,7 @@
-import { getNextStage, STAGE_ORDER } from '../src/transactions/stage-transitions';
+import {
+  getNextStage,
+  STAGE_ORDER,
+} from '../src/transactions/stage-transitions';
 
 describe('getNextStage', () => {
   it('advances agreement → earnest_money', () => {

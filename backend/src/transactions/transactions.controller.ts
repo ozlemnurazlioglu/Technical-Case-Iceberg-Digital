@@ -1,7 +1,17 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { TransactionsService } from './transactions.service';
 
+@ApiTags('transactions')
 @Controller('transactions')
 export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}
@@ -28,6 +38,8 @@ export class TransactionsController {
 
   @Get(':id/commission')
   getCommission(@Param('id') id: string) {
-    return this.transactionsService.findOne(id).then((t) => t.commissionBreakdown);
+    return this.transactionsService
+      .findOne(id)
+      .then((t) => t.commissionBreakdown);
   }
 }

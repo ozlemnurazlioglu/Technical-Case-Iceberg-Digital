@@ -17,7 +17,11 @@ export class CommissionService {
     const agentPool = totalServiceFee * 0.5;
 
     if (listingAgentId === sellingAgentId) {
-      return { agencyAmount, listingAgentAmount: agentPool, sellingAgentAmount: 0 };
+      return {
+        agencyAmount,
+        listingAgentAmount: agentPool,
+        sellingAgentAmount: 0,
+      };
     }
 
     return {

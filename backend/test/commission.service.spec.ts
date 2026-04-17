@@ -26,13 +26,19 @@ describe('CommissionService', () => {
 
   it('all amounts sum to totalServiceFee', () => {
     const result = service.calculate(10000, 'agent-a', 'agent-b');
-    const sum = result.agencyAmount + result.listingAgentAmount + result.sellingAgentAmount;
+    const sum =
+      result.agencyAmount +
+      result.listingAgentAmount +
+      result.sellingAgentAmount;
     expect(sum).toBe(10000);
   });
 
   it('all amounts sum to totalServiceFee (same agent)', () => {
     const result = service.calculate(8000, 'agent-a', 'agent-a');
-    const sum = result.agencyAmount + result.listingAgentAmount + result.sellingAgentAmount;
+    const sum =
+      result.agencyAmount +
+      result.listingAgentAmount +
+      result.sellingAgentAmount;
     expect(sum).toBe(8000);
   });
 });
