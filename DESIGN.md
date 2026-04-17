@@ -53,36 +53,158 @@ flowchart TB
 
 ---
 
-## Data Modeling
+## Domain Model
 
-### Transaction as the aggregate root
+The business is modelled with **two entities** and **one value object**, intentionally kept minimal.
 
-All transaction-related data lives in one MongoDB document:
+```mermaid
+classDiagram
+    class Agent {
+        +ObjectId _id
+        +string name
+        +string email  <<unique>>
+        +string? phone
+        +Date createdAt
+    }
 
+    class Transaction {
+        +ObjectId _id
+        +string propertyAddress
+        +number salePrice
+        +number totalServiceFee
+        +TransactionStage stage
+        +ObjectId listingAgentId
+        +ObjectId sellingAgentId
+        +CommissionBreakdown? commissionBreakdown
+        +StageHistoryEntry[] stageHistory
+        +Date createdAt
+        +Date updatedAt
+        +advanceStage() void
+    }
+
+    class CommissionBreakdown {
+        <<value object>>
+        +number agencyAmount
+        +number listingAgentAmount
+        +number sellingAgentAmount
+    }
+
+    class StageHistoryEntry {
+        <<value object>>
+        +TransactionStage stage
+        +Date timestamp
+    }
+
+    Transaction "1" --> "1" Agent : listingAgent
+    Transaction "1" --> "1" Agent : sellingAgent
+    Transaction "1" *-- "0..1" CommissionBreakdown : embeds
+    Transaction "1" *-- "many" StageHistoryEntry : embeds
 ```
-Transaction {
-  propertyAddress, salePrice, totalServiceFee
-  listingAgentId, sellingAgentId        ← references to Agent
-  stage                                 ← current state
-  stageHistory[]                        ← append-only audit log
-  commissionBreakdown                   ← embedded, set once at completion
-}
-```
 
-**Why embed the commission breakdown instead of computing it on read?**
+### Entities
 
-Three reasons:
-1. **Immutability** — once a transaction reaches `completed`, its financial record must not change even if business rules change. Embedding locks the snapshot.
-2. **Read performance** — the breakdown is always displayed with the transaction; a separate collection would require a join on every detail page.
-3. **Simplicity** — no cross-document consistency to manage.
+- **Agent** — the identity of a person at the agency. Thin by design: only name, email, optional phone. Does **not** store transaction history, earnings, or role; those are derived from the transaction side.
+- **Transaction** — the aggregate root of the business. Owns its lifecycle (`stage`), its audit trail (`stageHistory`), and its financial outcome (`commissionBreakdown`).
 
-### Agent as a thin entity
+### Value Objects (embedded, immutable)
 
-Agents hold only identity data (name, email, phone). Commission policy and transaction history are derived from the transaction side, not stored on the agent. This avoids denormalisation and keeps the agent document from growing as transaction volume scales.
+- **CommissionBreakdown** — `{ agencyAmount, listingAgentAmount, sellingAgentAmount }`. Written once at the transition to `completed`; never modified afterwards.
+- **StageHistoryEntry** — `{ stage, timestamp }`. Append-only; each stage change adds one entry.
+
+### Relationships
+
+- A `Transaction` references exactly two agents via `listingAgentId` and `sellingAgentId`. These **may point to the same agent** — this is a supported domain scenario (sole agent on both sides) and is explicitly handled by the commission calculation.
+- An `Agent` has no back-reference to transactions. All agent-related aggregations (total earned, deals closed) are computed by querying the transaction collection. This avoids a dual-write problem and keeps the agent document compact.
+
+### Domain Invariants
+
+| # | Invariant | Enforced by |
+|---|---|---|
+| I-1 | Every transaction references two existing agents (possibly the same) | `TransactionsService.create()` validates both IDs against `AgentsService` before insert |
+| I-2 | `stage` only advances forward, one step at a time | `getNextStage()` pure function + service-layer guard → 400 |
+| I-3 | `commissionBreakdown` is `null` until `stage === 'completed'`, then set exactly once and never modified | Default `null` in schema; `advanceStage()` populates it only on the terminal transition |
+| I-4 | `stageHistory` is strictly append-only | Service only pushes; no endpoint exposes edit or delete |
+| I-5 | Two agents cannot share an email address | Mongoose `unique: true` index + `E11000 → 409 Conflict` mapping |
+| I-6 | `salePrice` and `totalServiceFee` are positive numbers | `@IsPositive()` DTO validation + application-level checks |
+
+Every invariant is enforced **at the service layer** (authoritative) and additionally defended at the schema or validation layer where practical — see [Validation Strategy](#validation-strategy) and [Stage Transition Rules](#stage-transition-rules) for the "defense in depth" pattern.
 
 ---
 
-## Commission Policy
+## Key Architectural Decisions
+
+Summary of the major design decisions and the "why" behind each. Each row links to the section where it's discussed in depth.
+
+| # | Decision | Alternative rejected | Rationale |
+|---|---|---|---|
+| AD-01 | **Layered monolith** (NestJS modules → services → Mongoose) | CQRS / event sourcing / hexagonal with ports & adapters | Domain fits on one page (4 stages, 2 entities). Extra patterns would add ceremony without reducing risk. See [Architecture](#architecture). |
+| AD-02 | **Transaction as aggregate root** with embedded breakdown & history | Separate `commissions` and `stage_events` collections | All transaction state is co-located → single-document reads, atomic writes, immutable financial snapshot. See [Financial Breakdown](#financial-breakdown-42). |
+| AD-03 | **Agent as a thin entity** (no embedded earnings) | Denormalise totals onto the agent document for faster reads | Dual-write complexity isn't justified at this scale; aggregation is fast enough from transactions. See [Domain Model](#domain-model). |
+| AD-04 | **`CommissionService` is a pure function** (no DB, no DI on its logic) | Commission logic inside `TransactionsService` with DB access | Pure functions are trivially testable and auditable; the whole policy is 10 lines. See [Commission Calculation](#commission-calculation). |
+| AD-05 | **Server-side enforcement of stage transitions**, frontend is UX-only | Trust the frontend to send valid transitions | Backend is authoritative; frontend check is a safety net, not a gate. See [Stage Transition Rules](#stage-transition-rules). |
+| AD-06 | **Pinia stores own all server state**; components are props-only | Components fetch their own data | Unidirectional data flow; components stay presentational and testable. See [State Management](#state-management). |
+| AD-07 | **REST + JSON over a typed service contract** | GraphQL / tRPC | REST + Swagger/OpenAPI covers every endpoint here (4 resources, CRUD + 1 action); GraphQL's benefits (over-fetch avoidance, schema negotiation) wouldn't earn their complexity. |
+| AD-08 | **MongoDB over a relational DB** | PostgreSQL with JSONB columns | Document model maps 1-to-1 to the aggregate (`Transaction` = document); Atlas M0 free tier is sufficient; no multi-table transactions needed. See [MongoDB Schema Strategy](#mongodb-schema-strategy). |
+| AD-09 | **Split platforms: Railway (API) + Vercel (web) + Atlas (DB)** | Single PaaS (Render, Fly.io) | Each platform is best-in-class for its layer and has a free tier. See [Deployment](#deployment). |
+
+These decisions are deliberately biased toward **removing** options rather than adding them. The brief defines a narrow problem, and the design follows its shape rather than anticipating imagined future requirements.
+
+---
+
+## MongoDB Schema Strategy
+
+Two collections, no more. The schema is shaped by the [Domain Model](#domain-model) and the invariants listed there.
+
+### Collections
+
+| Collection | Role | Document shape |
+|---|---|---|
+| `agents` | Identity registry | `{ name, email (unique), phone?, createdAt }` |
+| `transactions` | Aggregate root | `{ propertyAddress, salePrice, totalServiceFee, stage, listingAgentId, sellingAgentId, commissionBreakdown?, stageHistory[], createdAt, updatedAt }` |
+
+### Embed vs. Reference Decisions
+
+| What | Choice | Why |
+|---|---|---|
+| `commissionBreakdown` inside transaction | **Embed** | Written once, read with parent, must be immutable → see [Financial Breakdown §4.2](#financial-breakdown-42) |
+| `stageHistory[]` inside transaction | **Embed** | Append-only, bounded (≤4 entries), always shown with the transaction |
+| `listingAgentId` / `sellingAgentId` | **Reference** (`ObjectId` + `ref: 'Agent'`) | Agents exist independently and are reused across transactions; embedding would duplicate their data |
+
+MongoDB's general rule applies: **embed what is owned by the parent and bounded in size; reference what has an independent lifecycle.**
+
+### Indexes
+
+| Index | Collection | Purpose |
+|---|---|---|
+| `{ email: 1 }` (unique) | `agents` | Enforces domain invariant I-5; surfaces as 409 Conflict |
+| `{ stage: 1 }` | `transactions` | Dashboard filtering by stage |
+| `{ listingAgentId: 1 }` | `transactions` | Agent leaderboard / profile views |
+| `{ sellingAgentId: 1 }` | `transactions` | Agent leaderboard / profile views |
+| `{ createdAt: -1 }` | `transactions` | Default sort on the main dashboard |
+
+Indexes are declared next to the schema (`TransactionSchema.index(...)`) so they live beside the code that relies on them.
+
+### Timestamps
+
+- **Transaction:** `{ timestamps: true }` — both `createdAt` and `updatedAt`. Transactions are mutable (stage advances, history appends), so `updatedAt` is meaningful.
+- **Agent:** `{ timestamps: { createdAt: true, updatedAt: false } }` — agents are rarely mutated; `createdAt` is the only time data that matters for onboarding analytics, and omitting `updatedAt` keeps the document leaner.
+
+### Schema-Level Guards
+
+- **`stage` enum** — `['agreement', 'earnest_money', 'title_deed', 'completed']` declared at the schema. Rejects malformed values even if the service layer is bypassed (e.g. direct `db.collection.insert()`).
+- **Required flags** on every non-optional domain field, so a missing `totalServiceFee` or `propertyAddress` fails fast rather than writing a half-formed document.
+- **`commissionBreakdown` defaults to `null`** — the schema treats "not yet computed" as a first-class state rather than a missing field.
+
+### What the Schema Does **Not** Enforce
+
+- **Valid agent references.** Mongoose refs are pointers, not foreign keys; MongoDB doesn't verify the agent actually exists. That check is done explicitly in `TransactionsService.create()` (invariant I-1).
+- **Forward-only stage transitions.** The enum allows any of the 4 values, so a direct DB write could still move `completed` → `agreement`. Application-layer enforcement (`getNextStage()`) closes this gap (invariant I-2).
+
+Defending the same invariant at multiple layers is intentional — see the ["Defense in Depth" table](#defense-in-depth-three-layers) under Stage Transition Rules.
+
+---
+
+## Commission Calculation
 
 ```
 agencyAmount      = totalServiceFee × 0.50
@@ -114,7 +236,7 @@ The brief requires the system to report, for every completed transaction, **how 
 
 | Option | Pros | Cons | Verdict |
 |---|---|---|---|
-| **Embed in the transaction document** ✅ | Atomic write with the stage transition; immutable by construction; single read serves detail page; no joins | Denormalised (agency split % frozen at completion time) | **Chosen** |
+| **Embed in the transaction document** | Atomic write with the stage transition; immutable by construction; single read serves detail page; no joins | Denormalised (agency split % frozen at completion time) | **Chosen** |
 | Dedicated `commissions` collection | Easier to evolve commission-specific fields (e.g. payout status) | Extra join on every read; cross-document consistency (two-phase writes) without MongoDB transactions; more moving parts for a value that never changes after completion | Rejected |
 | Compute dynamically on read | Always reflects current policy | Breaks immutability — a future policy change would retroactively alter historical records; reports must recompute on every request | Rejected |
 
@@ -228,11 +350,127 @@ The backend never trusts the frontend; validation is duplicated intentionally.
 
 ---
 
-## Frontend State Management
+## Frontend Architecture
 
-Pinia stores (`transactions`, `agents`) own all server state. Pages call store actions; components receive props only — no component fetches data directly. This keeps components purely presentational and makes the data flow linear and easy to trace.
+The frontend is a **Nuxt 3** app using the Composition API (`<script setup>`), deployed to Vercel with SSR enabled by default.
 
-The `useApi` composable centralises `baseURL` from `runtimeConfig.public.apiBase`. Changing the API endpoint (e.g. switching from local to deployed Railway URL) requires changing one environment variable.
+### Folder Layout
+
+```
+frontend/
+├── pages/                   ← file-based routing
+│   ├── index.vue            ← dashboard (transaction list + filters)
+│   ├── agents/index.vue     ← agent management
+│   ├── transactions/[id].vue ← detail page + stage advance
+│   └── reports.vue          ← summary + agent leaderboard
+├── components/              ← presentational, props-only
+│   ├── TransactionCard.vue
+│   ├── StageProgress.vue
+│   ├── CommissionBreakdown.vue
+│   ├── SummaryCard.vue
+│   └── ToastStack.vue
+├── stores/                  ← Pinia: all server state
+│   ├── transactions.ts
+│   ├── agents.ts
+│   └── reports.ts
+├── composables/             ← shared logic
+│   ├── useApi.ts            ← fetch wrapper with base URL
+│   └── useToast.ts          ← toast notification API
+├── types/index.ts           ← shared TypeScript types
+└── assets/css/main.css      ← Tailwind entry
+```
+
+### Page vs. Component Split
+
+The codebase enforces a strict separation:
+
+| Layer | Responsibility | May do |
+|---|---|---|
+| **Pages** (`pages/*.vue`) | Route-level containers; orchestrate store actions and layout | Import stores, call actions, read state, render components |
+| **Components** (`components/*.vue`) | Presentation of a single concept (a card, a progress bar, a breakdown) | Accept props, emit events — **no store imports, no fetch calls** |
+
+This rule keeps components trivially reusable and makes the data flow linear: *page reads from store → page passes props to component → component renders and emits → page calls store action*. No component ever surprises the page by fetching on its own.
+
+### Routing & SSR
+
+File-based routing via Nuxt's `pages/` directory. The `[id]` bracket syntax (`transactions/[id].vue`) produces dynamic routes. SSR is on by default on Vercel, which improves first-paint for the dashboard (where transaction data is the main content) without requiring any code changes in the pages themselves.
+
+### Styling
+
+**Tailwind CSS** (utility-first) for layout and typography. No custom design system — the visual vocabulary is intentionally small (neutral greys, a single accent for CTAs, colour-coded badges for the 4 stages) so the code reads as data-first rather than design-first.
+
+### Configuration
+
+Runtime configuration flows through `nuxt.config.ts`:
+
+```ts
+runtimeConfig: {
+  public: {
+    apiBase: process.env.NUXT_PUBLIC_API_BASE ?? 'http://localhost:3001'
+  }
+}
+```
+
+Consumed only by the `useApi` composable. Switching the backend URL between local, preview, and production is a one-env-var change — no code edits.
+
+### Composables
+
+| Composable | Role |
+|---|---|
+| `useApi` | Wraps `$fetch` with the configured `baseURL`. Single source of truth for API URLs. |
+| `useToast` | Provides `success()` / `error()` helpers, backed by the `ToastStack` component rendered in `app.vue`. Decouples "something happened" from "show it on screen". |
+
+---
+
+## State Management
+
+### Pinia as the Single Source of Truth
+
+All server state lives in Pinia stores — **never** in component `ref()`s, **never** in pages as local reactive state. There are three stores, one per resource:
+
+| Store | Owns | Actions |
+|---|---|---|
+| `stores/transactions.ts` | Transaction list, current transaction, loading & error flags | `fetchAll()`, `fetchOne(id)`, `create(dto)`, `advance(id)` |
+| `stores/agents.ts` | Agent list, loading & error flags | `fetchAll()`, `create(dto)` |
+| `stores/reports.ts` | Summary + agent leaderboard | `fetchSummary()`, `fetchAgents()` |
+
+### Why Pinia (over Nuxt's `useState`)
+
+- **Typed, testable stores** — each store is a plain composable function, easy to unit-test.
+- **Action composition** — `advance()` calls `useApi()`, updates local state, and triggers a toast through `useToast()` in a single place rather than scattering the flow across a component.
+- **Devtools integration** — Pinia plugs into Vue DevTools out of the box; every state mutation is inspectable, which speeds up debugging during evaluation.
+
+### Data Flow Pattern
+
+```
+User clicks "Advance to Earnest Money"
+    ↓
+Page handler calls transactionsStore.advance(id)
+    ↓
+Store action → useApi().patch(`/transactions/${id}/advance`)
+    ↓
+Backend responds with the updated transaction
+    ↓
+Store replaces currentItem and patches the item in the list
+    ↓
+Page re-renders (reactive binding)
+    ↓
+Store triggers useToast().success('Stage advanced')
+```
+
+No component touches the network directly. No page stores a "local copy" of transactions that can drift from the store.
+
+### Refetch-Over-Optimistic
+
+After every mutating action the store **refetches** (or uses the server response directly) rather than patching optimistically. Rationale: the backend is authoritative over the commission breakdown, the stage history timestamp, and — for the `advance → completed` case — the entire financial payload. Reconstructing that correctly on the client would duplicate server logic. Latency is not a concern at this scale.
+
+### Error Handling
+
+Every store action wraps its fetch in try/catch, sets a `loading`/`error` flag, and routes user-visible failures through `useToast().error(message)`. This keeps pages free of try/catch boilerplate while still giving the user clear feedback.
+
+### Feedback Loop
+
+`useToast` is the single UX-feedback channel. Every success and every handled error produces a toast with a short message, so the user always knows the outcome of an action without hunting for inline error banners.
 
 ---
 
@@ -264,6 +502,34 @@ Two endpoints:
 | `app.controller.spec.ts` | Unit | Root endpoint returns API metadata (name, version, docs path, endpoint links) |
 
 **24 tests across 6 suites, all passing** (`npx jest --rootDir . --no-coverage`). The commission service, stage-transition utility, and reports aggregation are pure/near-pure functions — no database, minimal DI. This makes them the fastest and most reliable tests in the suite and maps directly to §4.3 (commission policy) and §4.1 (stage lifecycle) of the brief.
+
+### Test Pyramid Applied
+
+```
+          ▲    (few, slow, high-value)
+         /  \
+        /e2e \   — intentionally out of scope for this case
+       /------\
+      /  int.  \  — intentionally out of scope for this case
+     /----------\
+    /   unit     \ — 24 tests, 6 suites  ← the entire suite lives here
+```
+
+### Explicitly Out of Scope (and Why)
+
+| Test type | Status | Reason |
+|---|---|---|
+| **Integration tests** (NestJS `Test.createTestingModule` hitting in-memory Mongo) | Not included | The service layer is already covered by unit tests with mocked `Model`; the marginal value of a real Mongo round-trip is low and would slow CI materially. |
+| **End-to-end tests** (Playwright on the deployed URLs) | Not included | E2E infrastructure is non-trivial and the case brief asks for unit tests specifically (§6). Adding Playwright without a stable seed dataset would produce flaky tests. |
+| **Frontend unit tests** (Vitest on stores/components) | Not included | The frontend has zero business logic — all rules live in the API. Stores are thin wrappers around fetch calls. Testing them would effectively test `$fetch`. |
+
+### What the Tests Prove
+
+- **Commission policy is correct in both scenarios** (same agent, different agents) — covers §4.3 acceptance criteria.
+- **Stage lifecycle is safe** — can't advance past `completed`, can't skip stages, can't read a deleted transaction — covers §4.1.
+- **Reports aggregate correctly** — including the same-agent edge case that counts a transaction once rather than twice.
+- **Agent uniqueness surfaces as 409** — not 500, not a silent swallow.
+- **API root responds with metadata**, not a 404 — smoke test that the AppModule wires up correctly in production.
 
 ## CI/CD
 
